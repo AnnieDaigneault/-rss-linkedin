@@ -39,18 +39,16 @@ HISTORY_FILE        = _data_dir / "linkedin_history.json"
 FEED_SNAPSHOTS_FILE = _data_dir / "feed_snapshots.json"
 
 IMAGE_STYLE = (
-    "STYLE 3D CGI ÉDITORIAL — reproduire exactement cette esthétique : "
-    "FOND : dégradé horizontal lisse, rose chaud à gauche vers bleu pervenche froid à droite, "
-    "saturation moyenne (ni pastel délavé, ni néon criard), luminosité médium. "
-    "Sol légèrement réfléchissant, dans les mêmes tons que le fond. "
-    "OBJETS ET PERSONNAGES : rendu 3D low-poly propre — silhouettes humaines simplifiées sans visage, "
-    "objets technologiques géométriques, structures abstraites. "
-    "Matière mate ou légèrement satinée, couleurs mauve, lavande, gris-bleu, blanc. "
-    "ÉLÉMENTS RÉSEAU : lignes fines blanches lumineuses, nœuds brillants, motifs de circuits ou "
-    "wireframe polygonal — qui évoquent la connectivité et la technologie. "
-    "ÉCLAIRAGE : doux et diffus avec un point focal lumineux blanc ou cyan au centre. "
-    "COMPOSITION : scène narrative centrée, espace aéré, profondeur de champ subtile. "
-    "ABSOLUMENT AUCUN texte, lettre, chiffre, mot, sigle, code ou symbole écrit dans l'image. "
+    "STYLE 3D CGI ÉDITORIAL, esthétique LinkedIn professionnelle. "
+    "FOND : au choix selon le concept — soit un dégradé lisse rose chaud vers bleu pervenche (saturation moyenne), "
+    "soit un fond neutre gris-bleu ou gris perle professionnel avec légère profondeur. "
+    "RENDU : 3D soigné et réaliste, matières satinées ou translucides, ombres douces, profondeur de champ subtile. "
+    "COULEURS DES OBJETS : mauve, lavande, gris-bleu, blanc nacré, or pâle — en harmonie avec le fond. "
+    "COMPOSITION : un sujet principal fort et clairement lisible, bien centré, espace aéré autour. "
+    "INTERDITS ABSOLUS : halos répétitifs, orbes flottants, lens flares, nuages de particules, bulles en arrière-plan. "
+    "VARIER les éléments selon le concept : objet tangible, structure géométrique, silhouette humaine sans visage, "
+    "surface réfléchissante, motif wireframe — UN seul registre par image, pas tout en même temps. "
+    "ABSOLUMENT AUCUN texte, lettre, chiffre, mot, sigle, symbole dans l'image. "
     "JAMAIS de fond noir, blanc pur, beige, orange, jaune ou vert."
 )
 
@@ -458,21 +456,22 @@ def generate_concepts():
     response = client.messages.create(
         model="claude-opus-4-6", max_tokens=800,
         system="Tu es un directeur artistique spécialisé en visuels LinkedIn professionnels.",
-        messages=[{"role": "user", "content": f"""Pour ce post LinkedIn, propose 3 concepts d'image distincts à générer avec Imagen 4.
+        messages=[{"role": "user", "content": f"""Pour ce post LinkedIn, propose 3 concepts d'image COURTS et distincts.
 
 {post}
 
-RÈGLES ABSOLUES pour chaque concept :
-- Décrire uniquement des éléments VISUELS (formes, lumières, objets, compositions)
-- AUCUN nom propre, marque, acronyme, sigle, pays, ville, organisation ou mot identifiable
-- AUCUNE instruction de texte ou étiquette — l'image ne doit contenir AUCUN mot
-- Métaphore visuelle forte qui évoque le thème sans le nommer
-- Style : rendu 3D éthéré, bokeh, mauve/lavande/rose/bleu-turquoise, wireframe lumineux
+RÈGLES ABSOLUES :
+- Maximum 15 mots par concept
+- Éléments visuels uniquement : objets, formes, composition — PAS de lumières, halos ou effets
+- AUCUN nom propre, marque, acronyme, pays, ville, organisation
+- AUCUN mot dans l'image
+- Chaque concept utilise une MÉTAPHORE VISUELLE DIFFÉRENTE (objet, structure, scène, personnage)
+- Les 3 concepts ne doivent PAS partager les mêmes éléments visuels
 
-Format EXACT (3 lignes, une par concept) :
-CONCEPT 1: [description purement visuelle, sans nom propre]
-CONCEPT 2: [description purement visuelle, sans nom propre]
-CONCEPT 3: [description purement visuelle, sans nom propre]"""}]
+Format EXACT (3 lignes) :
+CONCEPT 1: [max 15 mots]
+CONCEPT 2: [max 15 mots]
+CONCEPT 3: [max 15 mots]"""}]
     )
     text = response.content[0].text.strip()
     concepts = re.findall(r"CONCEPT \d+:\s*(.+?)(?=CONCEPT \d+:|$)", text, re.DOTALL)
