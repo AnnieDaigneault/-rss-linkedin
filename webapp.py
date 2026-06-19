@@ -22,9 +22,10 @@ except ImportError:
 import feedparser, anthropic, openai
 from google import genai
 from google.genai import types as genai_types
-from flask import Flask, render_template_string, request, jsonify, send_file
+from flask import Flask, render_template_string, request, jsonify, send_file, session, redirect, url_for
 
 app = Flask(__name__)
+app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-change-me-in-prod")
 
 RSS_URL = "https://www.google.com/alerts/feeds/16960465778323342585/10731404475403027265"
 
@@ -182,6 +183,65 @@ def save_feed_snapshot(articles):
         "eligible": sum(1 for a in articles if a.get("eligible"))
     }
     FEED_SNAPSHOTS_FILE.write_text(json.dumps(snapshots, ensure_ascii=False, indent=2), encoding="utf-8")
+
+# ── Auth ───────────────────────────────────────────────────────────────────────
+
+LOGIN_HTML = """<!doctype html><html lang="fr"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RSS → LinkedIn | extensio.ai</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{min-height:100vh;display:flex;align-items:center;justify-content:center;
+  background:linear-gradient(135deg,#1a0a2e 0%,#16213e 50%,#0f3460 100%);font-family:-apple-system,sans-serif}
+.card{background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.12);border-radius:16px;
+  padding:40px 36px;width:100%;max-width:360px;backdrop-filter:blur(12px)}
+h1{color:#fff;font-size:1.3rem;font-weight:700;margin-bottom:6px;text-align:center}
+p{color:rgba(255,255,255,.5);font-size:.85rem;text-align:center;margin-bottom:28px}
+input[type=password]{width:100%;padding:12px 16px;border-radius:10px;border:1px solid rgba(255,255,255,.2);
+  background:rgba(255,255,255,.08);color:#fff;font-size:1rem;outline:none;margin-bottom:14px}
+input[type=password]::placeholder{color:rgba(255,255,255,.35)}
+input[type=password]:focus{border-color:#a78bfa}
+button{width:100%;padding:13px;border-radius:10px;border:none;
+  background:linear-gradient(90deg,#7c3aed,#a855f7);color:#fff;font-size:1rem;
+  font-weight:600;cursor:pointer;transition:opacity .2s}
+button:hover{opacity:.9}
+.err{color:#f87171;font-size:.85rem;text-align:center;margin-top:10px}
+</style></head><body>
+<div class="card">
+  <h1>RSS → LinkedIn</h1>
+  <p>extensio.ai</p>
+  <form method="post">
+    <input type="password" name="password" placeholder="Mot de passe" autofocus autocomplete="current-password">
+    <button type="submit">Entrer</button>
+    {% if error %}<div class="err">Mot de passe incorrect</div>{% endif %}
+  </form>
+</div></body></html>"""
+
+@app.before_request
+def require_login():
+    app_password = os.environ.get("APP_PASSWORD")
+    if not app_password:
+        return  # Pas de mot de passe configuré → accès libre (local)
+    if request.endpoint in ("login", "static"):
+        return
+    if not session.get("authenticated"):
+        return redirect(url_for("login"))
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    error = False
+    if request.method == "POST":
+        app_password = os.environ.get("APP_PASSWORD", "")
+        if request.form.get("password") == app_password:
+            session["authenticated"] = True
+            return redirect(url_for("index"))
+        error = True
+    return render_template_string(LOGIN_HTML, error=error)
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
 
 # ── Routes ─────────────────────────────────────────────────────────────────────
 
@@ -761,6 +821,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     <span id="iphone-url" style="display:none; font-size:11px; color:#888; background:#f0f0f8; padding:3px 8px; border-radius:6px; cursor:pointer;" title="URL pour iPhone"></span>
     <button class="btn-history" onclick="showHistory()">🗂️ Historique</button>
     <div id="key-status" class="key-status" onclick="showKeyHelp()">Vérification...</div>
+    <a href="/logout" style="font-size:12px; color:#888; text-decoration:none; padding:4px 8px; border-radius:6px; background:#f0f0f8;" title="Déconnexion">🔒</a>
   </div>
 </header>
 <main>
