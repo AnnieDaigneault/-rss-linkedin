@@ -22,33 +22,27 @@ except ImportError:
 import feedparser, anthropic, openai
 from google import genai
 from google.genai import types as genai_types
-from flask import Flask, render_template_string, request, jsonify, send_file, session, redirect, url_for
+from flask import Flask, render_template_string, request, jsonify, send_file
 
 app = Flask(__name__)
-app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-change-me-in-prod")
 
 RSS_URL = "https://www.google.com/alerts/feeds/16960465778323342585/10731404475403027265"
-
-# Chemins adaptés : local (Desktop) ou cloud (/tmp)
-IS_CLOUD = bool(os.environ.get("RAILWAY_ENVIRONMENT") or os.environ.get("RENDER"))
-_data_dir = Path("/tmp") if IS_CLOUD else Path.home() / "Desktop"
-_img_dir  = Path("/tmp/linkedin_images") if IS_CLOUD else Path.home() / "Downloads"
-_img_dir.mkdir(parents=True, exist_ok=True)
-
-HISTORY_FILE        = _data_dir / "linkedin_history.json"
-FEED_SNAPSHOTS_FILE = _data_dir / "feed_snapshots.json"
+HISTORY_FILE = Path.home() / "Desktop" / "linkedin_history.json"
+FEED_SNAPSHOTS_FILE = Path.home() / "Desktop" / "feed_snapshots.json"
 
 IMAGE_STYLE = (
-    "STYLE 3D CGI ÉDITORIAL, esthétique LinkedIn professionnelle. "
-    "FOND : au choix selon le concept — soit un dégradé lisse rose chaud vers bleu pervenche (saturation moyenne), "
-    "soit un fond neutre gris-bleu ou gris perle professionnel avec légère profondeur. "
-    "RENDU : 3D soigné et réaliste, matières satinées ou translucides, ombres douces, profondeur de champ subtile. "
-    "COULEURS DES OBJETS : mauve, lavande, gris-bleu, blanc nacré, or pâle — en harmonie avec le fond. "
-    "COMPOSITION : un sujet principal fort et clairement lisible, bien centré, espace aéré autour. "
-    "INTERDITS ABSOLUS : halos répétitifs, orbes flottants, lens flares, nuages de particules, bulles en arrière-plan. "
-    "VARIER les éléments selon le concept : objet tangible, structure géométrique, silhouette humaine sans visage, "
-    "surface réfléchissante, motif wireframe — UN seul registre par image, pas tout en même temps. "
-    "ABSOLUMENT AUCUN texte, lettre, chiffre, mot, sigle, symbole dans l'image. "
+    "STYLE 3D CGI ÉDITORIAL — reproduire exactement cette esthétique : "
+    "FOND : dégradé horizontal lisse, rose chaud à gauche vers bleu pervenche froid à droite, "
+    "saturation moyenne (ni pastel délavé, ni néon criard), luminosité médium. "
+    "Sol légèrement réfléchissant, dans les mêmes tons que le fond. "
+    "OBJETS ET PERSONNAGES : rendu 3D low-poly propre — silhouettes humaines simplifiées sans visage, "
+    "objets technologiques géométriques, structures abstraites. "
+    "Matière mate ou légèrement satinée, couleurs mauve, lavande, gris-bleu, blanc. "
+    "ÉLÉMENTS RÉSEAU : lignes fines blanches lumineuses, nœuds brillants, motifs de circuits ou "
+    "wireframe polygonal — qui évoquent la connectivité et la technologie. "
+    "ÉCLAIRAGE : doux et diffus avec un point focal lumineux blanc ou cyan au centre. "
+    "COMPOSITION : scène narrative centrée, espace aéré, profondeur de champ subtile. "
+    "ABSOLUMENT AUCUN texte, lettre, chiffre, mot, sigle, code ou symbole écrit dans l'image. "
     "JAMAIS de fond noir, blanc pur, beige, orange, jaune ou vert."
 )
 
@@ -104,10 +98,10 @@ RÈGLES STYLISTIQUES OBLIGATOIRES :
 - JAMAIS d'astérisques (`*` ou `**`) — LinkedIn ne supporte pas le markdown, ils s'affichent en brut
 - JAMAIS de `#hashtags` dans le corps du post — si hashtags, uniquement en toute fin, max 3
 
-11 TICS IA À ÉVITER ABSOLUMENT — vérifier chaque post avant de le retourner :
-1. Tirets longs (—) — préférer les deux-points ou reformuler
-2. Structure "Ce n'est pas X, c'est Y" — trop mécanique, reformuler autrement
-3. "Dans un monde où...", "À l'ère de...", "Force est de constater", "Il est important de noter"
+10 TICS IA À ÉVITER ABSOLUMENT — vérifier chaque post avant de le retourner :
+1. Structure "Ce n'est pas X, c'est Y" — trop mécanique, reformuler autrement
+2. Tirets longs (—) — préférer les deux-points ou reformuler
+3. "Dans un monde où...", "À l'ère de...", "Force est de constanter", "Il est important de noter"
 4. Structure académique rigide visible (intro/développement/conclusion marqués)
 5. Redondances artificielles — ne pas répéter la même idée paraphrasée
 6. Majuscules excessives : écrire "intelligence artificielle" pas "Intelligence Artificielle"
@@ -115,7 +109,6 @@ RÈGLES STYLISTIQUES OBLIGATOIRES :
 8. Gras excessif — utiliser avec parcimonie, pas sur chaque mot-clé
 9. Emojis en rafale — max 1-2 par paragraphe
 10. Enthousiasme forcé : pas de "Révolutionnaire !", "Incroyable !", "Game-changer !", "Fascinant !"
-11. Phrase hachée (style haiku IA) — Ne jamais fragmenter artificiellement les phrases pour créer du suspense ou un effet dramatique. Exemples à proscrire : "Je suis allée à l'épicerie. Deux fois. J'ai acheté des oeufs. Douze." ou "Lourd. Profond. Révélateur." Ce procédé vise à forcer l'émotion par la syntaxe plutôt que par le fond. Le résultat sonne inauthentique. Les phrases complètes et la prose fluide font le travail. Réserver les micro-phrases (3-5 mots) à un usage ponctuel et intentionnel, pas comme structure dominante.
 """
 
 def clean_post(text):
@@ -182,65 +175,6 @@ def save_feed_snapshot(articles):
     }
     FEED_SNAPSHOTS_FILE.write_text(json.dumps(snapshots, ensure_ascii=False, indent=2), encoding="utf-8")
 
-# ── Auth ───────────────────────────────────────────────────────────────────────
-
-LOGIN_HTML = """<!doctype html><html lang="fr"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>RSS → LinkedIn | extensio.ai</title>
-<style>
-*{box-sizing:border-box;margin:0;padding:0}
-body{min-height:100vh;display:flex;align-items:center;justify-content:center;
-  background:linear-gradient(135deg,#1a0a2e 0%,#16213e 50%,#0f3460 100%);font-family:-apple-system,sans-serif}
-.card{background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.12);border-radius:16px;
-  padding:40px 36px;width:100%;max-width:360px;backdrop-filter:blur(12px)}
-h1{color:#fff;font-size:1.3rem;font-weight:700;margin-bottom:6px;text-align:center}
-p{color:rgba(255,255,255,.5);font-size:.85rem;text-align:center;margin-bottom:28px}
-input[type=password]{width:100%;padding:12px 16px;border-radius:10px;border:1px solid rgba(255,255,255,.2);
-  background:rgba(255,255,255,.08);color:#fff;font-size:1rem;outline:none;margin-bottom:14px}
-input[type=password]::placeholder{color:rgba(255,255,255,.35)}
-input[type=password]:focus{border-color:#a78bfa}
-button{width:100%;padding:13px;border-radius:10px;border:none;
-  background:linear-gradient(90deg,#7c3aed,#a855f7);color:#fff;font-size:1rem;
-  font-weight:600;cursor:pointer;transition:opacity .2s}
-button:hover{opacity:.9}
-.err{color:#f87171;font-size:.85rem;text-align:center;margin-top:10px}
-</style></head><body>
-<div class="card">
-  <h1>RSS → LinkedIn</h1>
-  <p>extensio.ai</p>
-  <form method="post">
-    <input type="password" name="password" placeholder="Mot de passe" autofocus autocomplete="current-password">
-    <button type="submit">Entrer</button>
-    {% if error %}<div class="err">Mot de passe incorrect</div>{% endif %}
-  </form>
-</div></body></html>"""
-
-@app.before_request
-def require_login():
-    app_password = os.environ.get("APP_PASSWORD")
-    if not app_password:
-        return  # Pas de mot de passe configuré → accès libre (local)
-    if request.endpoint in ("login", "static"):
-        return
-    if not session.get("authenticated"):
-        return redirect(url_for("login"))
-
-@app.route("/login", methods=["GET", "POST"])
-def login():
-    error = False
-    if request.method == "POST":
-        app_password = os.environ.get("APP_PASSWORD", "")
-        if request.form.get("password") == app_password:
-            session["authenticated"] = True
-            return redirect(url_for("index"))
-        error = True
-    return render_template_string(LOGIN_HTML, error=error)
-
-@app.route("/logout")
-def logout():
-    session.clear()
-    return redirect(url_for("login"))
-
 # ── Routes ─────────────────────────────────────────────────────────────────────
 
 @app.route("/")
@@ -249,12 +183,6 @@ def index():
 
 @app.route("/api/health")
 def health():
-    import socket as _socket
-    try:
-        s = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80)); local_ip = s.getsockname()[0]; s.close()
-    except Exception:
-        local_ip = "127.0.0.1"
     anthropic_ok = bool(os.environ.get("ANTHROPIC_API_KEY"))
     openai_ok = bool(os.environ.get("OPENAI_API_KEY"))
     buffer_ok = bool(os.environ.get("BUFFER_ACCESS_TOKEN"))
@@ -262,7 +190,6 @@ def health():
         "anthropic": anthropic_ok,
         "openai": openai_ok,
         "buffer": buffer_ok,
-        "local_ip": local_ip,
         "ok": anthropic_ok and openai_ok
     })
 
@@ -456,22 +383,21 @@ def generate_concepts():
     response = client.messages.create(
         model="claude-opus-4-6", max_tokens=800,
         system="Tu es un directeur artistique spécialisé en visuels LinkedIn professionnels.",
-        messages=[{"role": "user", "content": f"""Pour ce post LinkedIn, propose 3 concepts d'image COURTS et distincts.
+        messages=[{"role": "user", "content": f"""Pour ce post LinkedIn, propose 3 concepts d'image distincts à générer avec Imagen 4.
 
 {post}
 
-RÈGLES ABSOLUES :
-- Maximum 15 mots par concept
-- Éléments visuels uniquement : objets, formes, composition — PAS de lumières, halos ou effets
-- AUCUN nom propre, marque, acronyme, pays, ville, organisation
-- AUCUN mot dans l'image
-- Chaque concept utilise une MÉTAPHORE VISUELLE DIFFÉRENTE (objet, structure, scène, personnage)
-- Les 3 concepts ne doivent PAS partager les mêmes éléments visuels
+RÈGLES ABSOLUES pour chaque concept :
+- Décrire uniquement des éléments VISUELS (formes, lumières, objets, compositions)
+- AUCUN nom propre, marque, acronyme, sigle, pays, ville, organisation ou mot identifiable
+- AUCUNE instruction de texte ou étiquette — l'image ne doit contenir AUCUN mot
+- Métaphore visuelle forte qui évoque le thème sans le nommer
+- Style : rendu 3D éthéré, bokeh, mauve/lavande/rose/bleu-turquoise, wireframe lumineux
 
-Format EXACT (3 lignes) :
-CONCEPT 1: [max 15 mots]
-CONCEPT 2: [max 15 mots]
-CONCEPT 3: [max 15 mots]"""}]
+Format EXACT (3 lignes, une par concept) :
+CONCEPT 1: [description purement visuelle, sans nom propre]
+CONCEPT 2: [description purement visuelle, sans nom propre]
+CONCEPT 3: [description purement visuelle, sans nom propre]"""}]
     )
     text = response.content[0].text.strip()
     concepts = re.findall(r"CONCEPT \d+:\s*(.+?)(?=CONCEPT \d+:|$)", text, re.DOTALL)
@@ -528,7 +454,7 @@ def generate_image():
         slug = re.sub(r"\s+", "-", re.sub(r"[^a-zA-Z0-9\s]", "", article.get("titre","linkedin")).strip().lower())[:50]
         filename = f"linkedin_{slug}_{datetime.now().strftime('%Y%m%d_%H%M')}.jpg"
 
-        downloads = _img_dir
+        downloads = Path.home() / "Downloads"
         downloads.mkdir(exist_ok=True)
         (downloads / filename).write_bytes(final_data)
         session_data["last_image_filename"] = filename
@@ -553,7 +479,7 @@ def generate_image():
 def view_image():
     filename = session_data.get("last_image_filename")
     if filename:
-        img_path = _img_dir / filename
+        img_path = Path.home() / "Downloads" / filename
         if img_path.exists():
             mimetype = "image/jpeg" if filename.endswith(".jpg") else "image/png"
             response = send_file(str(img_path), mimetype=mimetype)
@@ -564,7 +490,7 @@ def view_image():
 @app.route("/api/download-image")
 def download_image():
     filename = session_data.get("last_image_filename", "linkedin_image.png")
-    img_path = _img_dir / filename
+    img_path = Path.home() / "Downloads" / filename
     if img_path.exists():
         return send_file(str(img_path), mimetype="image/png",
                          as_attachment=True, download_name=filename)
@@ -817,10 +743,8 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   <div class="logo">e.</div>
   <h1>RSS → LinkedIn</h1>
   <div class="header-right">
-    <span id="iphone-url" style="display:none; font-size:11px; color:#888; background:#f0f0f8; padding:3px 8px; border-radius:6px; cursor:pointer;" title="URL pour iPhone"></span>
     <button class="btn-history" onclick="showHistory()">🗂️ Historique</button>
     <div id="key-status" class="key-status" onclick="showKeyHelp()">Vérification...</div>
-    <a href="/logout" style="font-size:12px; color:#888; text-decoration:none; padding:4px 8px; border-radius:6px; background:#f0f0f8;" title="Déconnexion">🔒</a>
   </div>
 </header>
 <main>
@@ -1011,31 +935,9 @@ async function checkKeys() {
       showKeyHelp();
     }
     loadFeedSnapshots();
-    // Afficher l'URL iPhone si on est sur desktop
-    if (d.local_ip && d.local_ip !== '127.0.0.1' && window.location.hostname === 'localhost') {
-      const el = document.getElementById('iphone-url');
-      if (el) {
-        el.textContent = '📱 ' + d.local_ip + ':5001';
-        el.style.display = '';
-        el.onclick = () => { copyToClipboard('http://' + d.local_ip + ':5001'); toast('URL copiée !'); };
-      }
-    }
   } catch(e) {
     console.error('Health check failed:', e);
   }
-}
-
-function copyToClipboard(text) {
-  if (navigator.clipboard && window.isSecureContext) {
-    navigator.clipboard.writeText(text).catch(() => fallbackCopy(text));
-  } else { fallbackCopy(text); }
-}
-function fallbackCopy(text) {
-  const ta = document.createElement('textarea');
-  ta.value = text; ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0;';
-  document.body.appendChild(ta); ta.focus(); ta.select();
-  try { document.execCommand('copy'); } catch(e) {}
-  document.body.removeChild(ta);
 }
 
 function showKeyHelp() {
@@ -1105,27 +1007,15 @@ async function loadFeedSnapshot(dateKey) {
 async function copyPost() {
   const text = currentPostText || document.getElementById('post-textarea')?.value || '';
   if (!text) { toast('Aucun post à copier'); return; }
-  // navigator.clipboard requiert HTTPS sur iOS — fallback universel
-  if (navigator.clipboard && window.isSecureContext) {
-    try {
-      await navigator.clipboard.writeText(text);
-      toast('📋 Copié dans le presse-papier !');
-      return;
-    } catch(e) {}
-  }
-  // Fallback : textarea temporaire (fonctionne sur HTTP/iOS)
-  const ta = document.createElement('textarea');
-  ta.value = text;
-  ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0;';
-  document.body.appendChild(ta);
-  ta.focus(); ta.select();
   try {
-    document.execCommand('copy');
+    await navigator.clipboard.writeText(text);
     toast('📋 Copié dans le presse-papier !');
   } catch(e) {
-    toast('Sélectionne et copie le texte manuellement');
+    // Fallback : sélection manuelle
+    const ta = document.getElementById('post-textarea');
+    if (ta) { ta.select(); document.execCommand('copy'); toast('📋 Copié !'); }
+    else toast('Impossible de copier automatiquement');
   }
-  document.body.removeChild(ta);
 }
 
 // ── Buffer ────────────────────────────────────────────────────────────────────
@@ -1480,5 +1370,4 @@ if __name__ == "__main__":
         print("ℹ️  BUFFER_ACCESS_TOKEN non défini — bouton Buffer masqué")
         print()
 
-    port = int(os.environ.get("PORT", 5001))
-    app.run(host="0.0.0.0", port=port, debug=False)
+    app.run(host="0.0.0.0", port=5001, debug=False)
