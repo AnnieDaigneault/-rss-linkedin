@@ -929,6 +929,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         <a class="btn btn-primary" id="download-btn" href="/api/download-image" download target="_blank">⬇️ Télécharger</a>
         <button class="btn btn-ghost" onclick="copyPost()">📋 Copier le post</button>
         <button class="btn btn-secondary" onclick="generateImageDirect()">🔄 Régénérer</button>
+        <button class="btn btn-secondary" onclick="show('screen-concepts')">← Autres concepts</button>
         <button class="btn btn-buffer buffer-btn" onclick="sendToBuffer()" style="display:none">📤 Envoyer à Buffer</button>
         <button class="btn btn-secondary" onclick="show('screen-articles')">📰 Nouvel article</button>
       </div>
