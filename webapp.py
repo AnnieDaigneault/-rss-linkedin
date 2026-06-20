@@ -22,28 +22,30 @@ except ImportError:
 import feedparser, anthropic, openai
 from google import genai
 from google.genai import types as genai_types
-from flask import Flask, render_template_string, request, jsonify, send_file
+from flask import Flask, render_template_string, request, jsonify, send_file, session, redirect, url_for
 
 app = Flask(__name__)
+app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-change-me-in-prod")
 
 RSS_URL = "https://www.google.com/alerts/feeds/16960465778323342585/10731404475403027265"
-HISTORY_FILE = Path.home() / "Desktop" / "linkedin_history.json"
-FEED_SNAPSHOTS_FILE = Path.home() / "Desktop" / "feed_snapshots.json"
+
+# Chemins adaptés : local (Desktop) ou cloud (/tmp)
+IS_CLOUD = bool(os.environ.get("RAILWAY_ENVIRONMENT") or os.environ.get("RENDER"))
+_data_dir = Path("/tmp") if IS_CLOUD else Path.home() / "Desktop"
+_img_dir  = Path("/tmp/linkedin_images") if IS_CLOUD else Path.home() / "Downloads"
+_img_dir.mkdir(parents=True, exist_ok=True)
+
+HISTORY_FILE        = _data_dir / "linkedin_history.json"
+FEED_SNAPSHOTS_FILE = _data_dir / "feed_snapshots.json"
 
 IMAGE_STYLE = (
-    "STYLE 3D CGI ÉDITORIAL — reproduire exactement cette esthétique : "
-    "FOND : dégradé horizontal lisse, rose chaud à gauche vers bleu pervenche froid à droite, "
-    "saturation moyenne (ni pastel délavé, ni néon criard), luminosité médium. "
-    "Sol légèrement réfléchissant, dans les mêmes tons que le fond. "
-    "OBJETS ET PERSONNAGES : rendu 3D low-poly propre — silhouettes humaines simplifiées sans visage, "
-    "objets technologiques géométriques, structures abstraites. "
-    "Matière mate ou légèrement satinée, couleurs mauve, lavande, gris-bleu, blanc. "
-    "ÉLÉMENTS RÉSEAU : lignes fines blanches lumineuses, nœuds brillants, motifs de circuits ou "
-    "wireframe polygonal — qui évoquent la connectivité et la technologie. "
-    "ÉCLAIRAGE : doux et diffus avec un point focal lumineux blanc ou cyan au centre. "
-    "COMPOSITION : scène narrative centrée, espace aéré, profondeur de champ subtile. "
-    "ABSOLUMENT AUCUN texte, lettre, chiffre, mot, sigle, code ou symbole écrit dans l'image. "
-    "JAMAIS de fond noir, blanc pur, beige, orange, jaune ou vert."
+    "Photographie professionnelle cinématographique, style éditorial tech moderne. "
+    "Palette : tons doux de rose poudré, lavande et violet, lumière chaude et atmosphérique. "
+    "Qualité photographique haute, bokeh naturel, composition soignée. "
+    "Intégrer discrètement un signal visuel numérique : reflet d'écran en arrière-plan, "
+    "lueur holographique légère, ou quelques nœuds de données lumineux en violet/rose "
+    "— présent mais discret, sans dominer la scène. "
+    "Aucun logo ni nom de marque visible."
 )
 
 EVALUATOR_SYSTEM = """Tu es Annie Daigneault, consultante en adoption responsable de l'IA pour les PME québécoises (extensio.ai). Tu évalues des articles de presse sur l'IA selon ta stratégie LinkedIn 2026.
@@ -78,7 +80,7 @@ CRITÈRES D'EXCLUSION :
 LINKEDIN_SYSTEM = """Tu rédiges des posts LinkedIn dans le style d'Annie Daigneault, consultante en adoption responsable de l'IA pour les PME québécoises (extensio.ai). Son fil conducteur : l'IA doit servir l'humain, pas le remplacer.
 
 STRUCTURE TYPIQUE :
-1. Accroche percutante — statistique frappante, question directe ou constat provocateur
+1. Accroche percutante — statistique frappante, question directe ou constat provocateur. MAXIMUM 15 MOTS. Phrase complète et fluide. Quand c'est une statistique, NE PAS inclure la source dans la première phrase — la source va à l'étape 2 ou dans le 🔎 final.
 2. Contextualisation — source, étude ou actualité qui ancre le propos
 3. Développement en prose fluide (pas de bullet points sauf exception)
 4. Prise de position personnelle — "Ce que j'en pense...", "Car sur le terrain, je constate que..."
@@ -98,10 +100,10 @@ RÈGLES STYLISTIQUES OBLIGATOIRES :
 - JAMAIS d'astérisques (`*` ou `**`) — LinkedIn ne supporte pas le markdown, ils s'affichent en brut
 - JAMAIS de `#hashtags` dans le corps du post — si hashtags, uniquement en toute fin, max 3
 
-10 TICS IA À ÉVITER ABSOLUMENT — vérifier chaque post avant de le retourner :
-1. Structure "Ce n'est pas X, c'est Y" — trop mécanique, reformuler autrement
-2. Tirets longs (—) — préférer les deux-points ou reformuler
-3. "Dans un monde où...", "À l'ère de...", "Force est de constanter", "Il est important de noter"
+11 TICS IA À ÉVITER ABSOLUMENT — vérifier chaque post avant de le retourner :
+1. Tirets longs (—) — préférer les deux-points ou reformuler
+2. Structure "Ce n'est pas X, c'est Y" — trop mécanique, reformuler autrement
+3. "Dans un monde où...", "À l'ère de...", "Force est de constater", "Il est important de noter"
 4. Structure académique rigide visible (intro/développement/conclusion marqués)
 5. Redondances artificielles — ne pas répéter la même idée paraphrasée
 6. Majuscules excessives : écrire "intelligence artificielle" pas "Intelligence Artificielle"
@@ -109,6 +111,7 @@ RÈGLES STYLISTIQUES OBLIGATOIRES :
 8. Gras excessif — utiliser avec parcimonie, pas sur chaque mot-clé
 9. Emojis en rafale — max 1-2 par paragraphe
 10. Enthousiasme forcé : pas de "Révolutionnaire !", "Incroyable !", "Game-changer !", "Fascinant !"
+11. Phrase hachée (style haiku IA) — Ne jamais fragmenter artificiellement les phrases pour créer du suspense ou un effet dramatique. Exemples à proscrire : "Je suis allée à l'épicerie. Deux fois. J'ai acheté des oeufs. Douze." ou "Lourd. Profond. Révélateur." Ce procédé vise à forcer l'émotion par la syntaxe plutôt que par le fond. Le résultat sonne inauthentique. Les phrases complètes et la prose fluide font le travail. Réserver les micro-phrases (3-5 mots) à un usage ponctuel et intentionnel, pas comme structure dominante.
 """
 
 def clean_post(text):
@@ -175,6 +178,65 @@ def save_feed_snapshot(articles):
     }
     FEED_SNAPSHOTS_FILE.write_text(json.dumps(snapshots, ensure_ascii=False, indent=2), encoding="utf-8")
 
+# ── Auth ───────────────────────────────────────────────────────────────────────
+
+LOGIN_HTML = """<!doctype html><html lang="fr"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RSS → LinkedIn | extensio.ai</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{min-height:100vh;display:flex;align-items:center;justify-content:center;
+  background:linear-gradient(135deg,#1a0a2e 0%,#16213e 50%,#0f3460 100%);font-family:-apple-system,sans-serif}
+.card{background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.12);border-radius:16px;
+  padding:40px 36px;width:100%;max-width:360px;backdrop-filter:blur(12px)}
+h1{color:#fff;font-size:1.3rem;font-weight:700;margin-bottom:6px;text-align:center}
+p{color:rgba(255,255,255,.5);font-size:.85rem;text-align:center;margin-bottom:28px}
+input[type=password]{width:100%;padding:12px 16px;border-radius:10px;border:1px solid rgba(255,255,255,.2);
+  background:rgba(255,255,255,.08);color:#fff;font-size:1rem;outline:none;margin-bottom:14px}
+input[type=password]::placeholder{color:rgba(255,255,255,.35)}
+input[type=password]:focus{border-color:#a78bfa}
+button{width:100%;padding:13px;border-radius:10px;border:none;
+  background:linear-gradient(90deg,#7c3aed,#a855f7);color:#fff;font-size:1rem;
+  font-weight:600;cursor:pointer;transition:opacity .2s}
+button:hover{opacity:.9}
+.err{color:#f87171;font-size:.85rem;text-align:center;margin-top:10px}
+</style></head><body>
+<div class="card">
+  <h1>RSS → LinkedIn</h1>
+  <p>extensio.ai</p>
+  <form method="post">
+    <input type="password" name="password" placeholder="Mot de passe" autofocus autocomplete="current-password">
+    <button type="submit">Entrer</button>
+    {% if error %}<div class="err">Mot de passe incorrect</div>{% endif %}
+  </form>
+</div></body></html>"""
+
+@app.before_request
+def require_login():
+    app_password = os.environ.get("APP_PASSWORD")
+    if not app_password:
+        return  # Pas de mot de passe configuré → accès libre (local)
+    if request.endpoint in ("login", "static"):
+        return
+    if not session.get("authenticated"):
+        return redirect(url_for("login"))
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    error = False
+    if request.method == "POST":
+        app_password = os.environ.get("APP_PASSWORD", "")
+        if request.form.get("password") == app_password:
+            session["authenticated"] = True
+            return redirect(url_for("index"))
+        error = True
+    return render_template_string(LOGIN_HTML, error=error)
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
+
 # ── Routes ─────────────────────────────────────────────────────────────────────
 
 @app.route("/")
@@ -183,6 +245,12 @@ def index():
 
 @app.route("/api/health")
 def health():
+    import socket as _socket
+    try:
+        s = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80)); local_ip = s.getsockname()[0]; s.close()
+    except Exception:
+        local_ip = "127.0.0.1"
     anthropic_ok = bool(os.environ.get("ANTHROPIC_API_KEY"))
     openai_ok = bool(os.environ.get("OPENAI_API_KEY"))
     buffer_ok = bool(os.environ.get("BUFFER_ACCESS_TOKEN"))
@@ -190,6 +258,7 @@ def health():
         "anthropic": anthropic_ok,
         "openai": openai_ok,
         "buffer": buffer_ok,
+        "local_ip": local_ip,
         "ok": anthropic_ok and openai_ok
     })
 
@@ -381,43 +450,53 @@ def generate_concepts():
     post = request.json.get("post", session_data.get("current_post", ""))
     client = anthropic.Anthropic()
     response = client.messages.create(
-        model="claude-opus-4-6", max_tokens=800,
-        system="Tu es un directeur artistique spécialisé en visuels LinkedIn professionnels.",
-        messages=[{"role": "user", "content": f"""Pour ce post LinkedIn, propose 3 concepts d'image distincts à générer avec Imagen 4.
+        model="claude-haiku-4-5-20251001", max_tokens=180,
+        system="Tu proposes 3 moments humains forts à illustrer : chacun doit avoir une personne précise, une émotion visible, et un contexte technologique implicite (sans nommer l'IA directement). Format strict, 3 lignes.",
+        messages=[{"role": "user", "content": f"""Post LinkedIn : {post[:600]}
 
-{post}
+3 concepts visuels très précis (15 mots max, commençant par Un/Une) :
+- Inclure 1-2 détails sensoriels concrets : geste, expression, objet, couleur, lieu
+- Scène réelle et photographiable — pas de métaphore abstraite
+- Contexte tech implicite dans la situation, pas nommé directement
 
-RÈGLES ABSOLUES pour chaque concept :
-- Décrire uniquement des éléments VISUELS (formes, lumières, objets, compositions)
-- AUCUN nom propre, marque, acronyme, sigle, pays, ville, organisation ou mot identifiable
-- AUCUNE instruction de texte ou étiquette — l'image ne doit contenir AUCUN mot
-- Métaphore visuelle forte qui évoque le thème sans le nommer
-- Style : rendu 3D éthéré, bokeh, mauve/lavande/rose/bleu-turquoise, wireframe lumineux
+Bons exemples avec détails sensoriels :
+- "Une avocate qui relit un contrat généré en 2 minutes, sourcils froncés, stylo rouge à la main"
+- "Un agriculteur qui pose sa main sur une terre sèche devant un écran d'irrigation allumé"
+- "Une dirigeante qui hésite, stylo en l'air, devant un rapport produit par une machine"
 
-Format EXACT (3 lignes, une par concept) :
-CONCEPT 1: [description purement visuelle, sans nom propre]
-CONCEPT 2: [description purement visuelle, sans nom propre]
-CONCEPT 3: [description purement visuelle, sans nom propre]"""}]
+CONCEPT 1: [scène avec détails sensoriels précis]
+CONCEPT 2: [autre scène, autre émotion, autre détail]
+CONCEPT 3: [troisième scène, contexte ou lieu différent]"""}]
     )
     text = response.content[0].text.strip()
     concepts = re.findall(r"CONCEPT \d+:\s*(.+?)(?=CONCEPT \d+:|$)", text, re.DOTALL)
-    concepts = [c.strip() for c in concepts if c.strip()]
+    concepts = [re.sub(r'\*+', '', c).strip().rstrip('.') for c in concepts if c.strip()]
     session_data["concepts"] = concepts
     return jsonify({"concepts": concepts})
 
 @app.route("/api/generate-image", methods=["POST"])
 def generate_image():
     try:
-        idx = request.json.get("concept_idx", 0)
-        concepts = session_data.get("concepts", [])
         article = session_data.get("current_article", {})
-        if idx >= len(concepts):
-            return jsonify({"error": "Concept non trouvé"}), 404
+        # Concept sélectionné par l'utilisateur, sinon extraction automatique
+        concept = request.json.get("concept", "").strip()
+        if concept:
+            subject = concept
+        else:
+            post = request.json.get("post", session_data.get("current_post", ""))
+            haiku = anthropic.Anthropic()
+            subject_resp = haiku.messages.create(
+                model="claude-haiku-4-5-20251001", max_tokens=60,
+                system="Tu résumes le sujet d'un post LinkedIn en une seule phrase de 8 à 12 mots commençant par 'Un' ou 'Une'. Décris une situation humaine concrète, sans jargon tech. Réponds avec la phrase uniquement, sans ponctuation finale.",
+                messages=[{"role": "user", "content": post[:2000]}]
+            )
+            subject = subject_resp.content[0].text.strip().rstrip(".")
+        session_data["last_subject"] = subject
 
         client = openai.OpenAI()
         response = client.images.generate(
             model="gpt-image-2",
-            prompt=f"{concepts[idx]} {IMAGE_STYLE}",
+            prompt=f"{IMAGE_STYLE} Scène : {subject}",
             size="1536x1024", quality="high", n=1
         )
 
@@ -454,7 +533,7 @@ def generate_image():
         slug = re.sub(r"\s+", "-", re.sub(r"[^a-zA-Z0-9\s]", "", article.get("titre","linkedin")).strip().lower())[:50]
         filename = f"linkedin_{slug}_{datetime.now().strftime('%Y%m%d_%H%M')}.jpg"
 
-        downloads = Path.home() / "Downloads"
+        downloads = _img_dir
         downloads.mkdir(exist_ok=True)
         (downloads / filename).write_bytes(final_data)
         session_data["last_image_filename"] = filename
@@ -463,7 +542,7 @@ def generate_image():
         if post:
             save_to_history(post, article, filename)
 
-        return jsonify({"filename": filename})
+        return jsonify({"filename": filename, "subject": subject})
 
     except openai.BadRequestError as e:
         return jsonify({"error": f"Contenu refusé : {str(e)[:300]}"}), 400
@@ -479,7 +558,7 @@ def generate_image():
 def view_image():
     filename = session_data.get("last_image_filename")
     if filename:
-        img_path = Path.home() / "Downloads" / filename
+        img_path = _img_dir / filename
         if img_path.exists():
             mimetype = "image/jpeg" if filename.endswith(".jpg") else "image/png"
             response = send_file(str(img_path), mimetype=mimetype)
@@ -490,7 +569,7 @@ def view_image():
 @app.route("/api/download-image")
 def download_image():
     filename = session_data.get("last_image_filename", "linkedin_image.png")
-    img_path = Path.home() / "Downloads" / filename
+    img_path = _img_dir / filename
     if img_path.exists():
         return send_file(str(img_path), mimetype="image/png",
                          as_attachment=True, download_name=filename)
@@ -735,6 +814,9 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     .btn-row { flex-direction: column; }
     .btn-row .btn { width: 100%; justify-content: center; }
     header h1 { font-size: 15px; }
+    /* Prevent iOS auto-zoom on input focus */
+    textarea.post-text, .refine-input { font-size: 16px; }
+    textarea.post-text { -webkit-overflow-scrolling: touch; }
   }
 </style>
 </head>
@@ -743,8 +825,10 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   <div class="logo">e.</div>
   <h1>RSS → LinkedIn</h1>
   <div class="header-right">
+    <span id="iphone-url" style="display:none; font-size:11px; color:#888; background:#f0f0f8; padding:3px 8px; border-radius:6px; cursor:pointer;" title="URL pour iPhone"></span>
     <button class="btn-history" onclick="showHistory()">🗂️ Historique</button>
     <div id="key-status" class="key-status" onclick="showKeyHelp()">Vérification...</div>
+    <a href="/logout" style="font-size:12px; color:#888; text-decoration:none; padding:4px 8px; border-radius:6px; background:#f0f0f8;" title="Déconnexion">🔒</a>
   </div>
 </header>
 <main>
@@ -823,7 +907,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   <div id="screen-concepts" class="screen">
     <div class="section-h">
       <h2>Concepts d'image 🖼️</h2>
-      <p>Choisis un concept, je génère avec GPT Image 2</p>
+      <p>Choisis un concept, je génère avec gpt-image-2</p>
     </div>
     <div id="concepts-list"></div>
     <div id="concept-action" style="display:none;margin-top:14px">
@@ -839,16 +923,18 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     <div class="section-h"><h2>Image prête 🎉</h2></div>
     <div class="image-result">
       <img id="result-img" src="" alt="Image générée">
+      <div id="result-subject" style="font-size:12px;color:var(--gray);text-align:center;margin:6px 0 2px;font-style:italic"></div>
       <div class="img-filename" id="result-filename"></div>
       <div class="btn-row" style="justify-content:center;flex-wrap:wrap">
-        <a class="btn btn-primary" id="download-btn" href="/api/download-image" download>⬇️ Télécharger</a>
+        <a class="btn btn-primary" id="download-btn" href="/api/download-image" download target="_blank">⬇️ Télécharger</a>
         <button class="btn btn-ghost" onclick="copyPost()">📋 Copier le post</button>
+        <button class="btn btn-secondary" onclick="generateImageDirect()">🔄 Régénérer</button>
         <button class="btn btn-buffer buffer-btn" onclick="sendToBuffer()" style="display:none">📤 Envoyer à Buffer</button>
         <button class="btn btn-secondary" onclick="show('screen-articles')">📰 Nouvel article</button>
       </div>
     </div>
     <p style="margin-top:12px;text-align:center;font-size:13px;color:var(--gray)">
-      Aussi sauvegardée dans ton dossier <strong>Downloads</strong>
+      Sur iPhone : appuie longuement sur l'image → <em>Enregistrer dans Photos</em>
     </p>
   </div>
 
@@ -935,9 +1021,31 @@ async function checkKeys() {
       showKeyHelp();
     }
     loadFeedSnapshots();
+    // Afficher l'URL iPhone si on est sur desktop
+    if (d.local_ip && d.local_ip !== '127.0.0.1' && window.location.hostname === 'localhost') {
+      const el = document.getElementById('iphone-url');
+      if (el) {
+        el.textContent = '📱 ' + d.local_ip + ':5001';
+        el.style.display = '';
+        el.onclick = () => { copyToClipboard('http://' + d.local_ip + ':5001'); toast('URL copiée !'); };
+      }
+    }
   } catch(e) {
     console.error('Health check failed:', e);
   }
+}
+
+function copyToClipboard(text) {
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(text).catch(() => fallbackCopy(text));
+  } else { fallbackCopy(text); }
+}
+function fallbackCopy(text) {
+  const ta = document.createElement('textarea');
+  ta.value = text; ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0;';
+  document.body.appendChild(ta); ta.focus(); ta.select();
+  try { document.execCommand('copy'); } catch(e) {}
+  document.body.removeChild(ta);
 }
 
 function showKeyHelp() {
@@ -1007,15 +1115,27 @@ async function loadFeedSnapshot(dateKey) {
 async function copyPost() {
   const text = currentPostText || document.getElementById('post-textarea')?.value || '';
   if (!text) { toast('Aucun post à copier'); return; }
+  // navigator.clipboard requiert HTTPS sur iOS — fallback universel
+  if (navigator.clipboard && window.isSecureContext) {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast('📋 Copié dans le presse-papier !');
+      return;
+    } catch(e) {}
+  }
+  // Fallback : textarea temporaire (fonctionne sur HTTP/iOS)
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0;';
+  document.body.appendChild(ta);
+  ta.focus(); ta.select();
   try {
-    await navigator.clipboard.writeText(text);
+    document.execCommand('copy');
     toast('📋 Copié dans le presse-papier !');
   } catch(e) {
-    // Fallback : sélection manuelle
-    const ta = document.getElementById('post-textarea');
-    if (ta) { ta.select(); document.execCommand('copy'); toast('📋 Copié !'); }
-    else toast('Impossible de copier automatiquement');
+    toast('Sélectionne et copie le texte manuellement');
   }
+  document.body.removeChild(ta);
 }
 
 // ── Buffer ────────────────────────────────────────────────────────────────────
@@ -1188,7 +1308,7 @@ async function goToConcepts() {
   const post = document.getElementById('post-textarea').value;
   currentPostText = post;
   document.getElementById('loading-title').textContent = 'Génération des concepts...';
-  document.getElementById('loading-sub').textContent = 'Claude imagine 3 visuels pour ton post';
+  document.getElementById('loading-sub').textContent = 'Préparation de 3 idées visuelles';
   show('screen-loading');
   try {
     const r = await fetch('/api/generate-concepts', {
@@ -1220,21 +1340,46 @@ function selectConcept(i) {
 
 async function generateImage() {
   if (selectedConcept === null) return;
+  const concepts = document.querySelectorAll('.concept-text');
+  const concept = concepts[selectedConcept]?.textContent || '';
   document.getElementById('loading-title').textContent = "Génération de l'image...";
-  document.getElementById('loading-sub').textContent = 'GPT Image 2 crée ton visuel (30–60 sec)';
+  document.getElementById('loading-sub').textContent = 'gpt-image-2 crée ton visuel (30–60 sec)';
   show('screen-loading');
   try {
     const r = await fetch('/api/generate-image', {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({concept_idx:selectedConcept})
+      body: JSON.stringify({concept})
     });
     const d = await r.json();
     if (!r.ok || d.error) { toast('Erreur: '+(d.error||'inconnue')); show('screen-concepts'); return; }
     document.getElementById('result-img').src = '/api/view-image?t=' + Date.now();
     document.getElementById('result-filename').textContent = d.filename;
     document.getElementById('download-btn').setAttribute('download', d.filename);
+    const subjectEl = document.getElementById('result-subject');
+    if (subjectEl) subjectEl.textContent = d.subject ? '« ' + d.subject + ' »' : '';
     show('screen-image');
   } catch(e) { toast('Erreur: '+e.message); show('screen-concepts'); }
+}
+
+async function generateImageDirect() {
+  const post = document.getElementById('post-textarea').value;
+  document.getElementById('loading-title').textContent = "Génération de l'image...";
+  document.getElementById('loading-sub').textContent = 'gpt-image-2 crée ton visuel (30–60 sec)';
+  show('screen-loading');
+  try {
+    const r = await fetch('/api/generate-image', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({post})
+    });
+    const d = await r.json();
+    if (!r.ok || d.error) { toast('Erreur: '+(d.error||'inconnue')); show('screen-image'); return; }
+    document.getElementById('result-img').src = '/api/view-image?t=' + Date.now();
+    document.getElementById('result-filename').textContent = d.filename;
+    document.getElementById('download-btn').setAttribute('download', d.filename);
+    const subjectEl = document.getElementById('result-subject');
+    if (subjectEl) subjectEl.textContent = d.subject ? '« ' + d.subject + ' »' : '';
+    show('screen-image');
+  } catch(e) { toast('Erreur: '+e.message); show('screen-image'); }
 }
 
 // ── Historique ────────────────────────────────────────────────────────────────
@@ -1370,4 +1515,5 @@ if __name__ == "__main__":
         print("ℹ️  BUFFER_ACCESS_TOKEN non défini — bouton Buffer masqué")
         print()
 
-    app.run(host="0.0.0.0", port=5001, debug=False)
+    port = int(os.environ.get("PORT", 5001))
+    app.run(host="0.0.0.0", port=port, debug=False)
